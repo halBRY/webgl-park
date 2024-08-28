@@ -1,0 +1,349 @@
+<!-- CS 425 Assignment 3 
+Student Name: Hal Brynteson 
+Student NetID: hbrynt2 -->
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+ 
+<script type="text/javascript" src="../Common/webgl-utils.js"></script>
+<script type="text/javascript" src="../Common/initShaders.js"></script>
+<script type="text/javascript" src="../Common/MV.js"></script>
+<script type="text/javascript" src="park.js"></script>	 <!-- Main application -->
+<script type="text/javascript" src="utils.js"></script>	 <!-- Utility Functions -->
+<script type="text/javascript" src="light.js"></script>	 <!-- Light Class -->
+<script type="text/javascript" src="lamp.js"></script>	 <!-- Lamp Class -->
+<script type="text/javascript" src="cone.js"></script>	 <!-- Cone class -->
+<script type="text/javascript" src="cube.js"></script>	 <!-- Cube class -->
+<script type="text/javascript" src="sphere.js"></script> <!-- Sphere class -->
+<script type="text/javascript" src="horse.js"></script>	 <!-- Horse class -->
+<script type="text/javascript" src="axes.js"></script>	 <!-- Axes class -->
+<script type="text/javascript" src="mgr.js"></script>	 <!-- MGR class -->
+<script type="text/javascript" src="ferris.js"></script> <!-- Ferris class -->
+
+
+<!-- VERTEX SHADER -->   
+
+<script id="vertex-shader" type="x-shader/x-vertex" >
+
+	// Attributes are values that vary from vertex to vertex 
+	attribute vec3 vPosition;	// Vertex position data in 3D space
+	attribute vec3 vColor;		// Vertex color data - Not needed for all applications
+	attribute vec3 vNormal;   // Normally this would be needed, but not for this special case.
+	attribute vec2 vTexCoords;
+
+	//Material Properties
+	attribute vec3 vAmbientMaterial;  
+	attribute vec3 vDiffuseMaterial;  
+	attribute vec3 vSpecularMaterial; 
+	attribute float vShininess;       
+
+	// Uniform variables are shared for all vertices 
+	uniform mat4 uModelXform;	// Transforms the model into World coordinates
+	uniform mat4 uViewXform;	// Transforms the view by moving all objects in inverse sense.
+	uniform mat4 uProjection;	// Camera Projection Matrix, e.g. lens parameters.
+	uniform mat3 uNormalXform;	 	// Transformation matrix to apply to vertex normals.
+	
+	uniform int  uGouraud;			// Flag to turn vertex shading off for certain bright objects ( e.g. axes. )
+
+	uniform vec3 uLightPosition[2]; 	// Position of light source.  Given in world coordinates.
+	uniform vec3 uAmbientLight[2];
+	uniform vec3 uDiffuseLight[2];
+	uniform vec3 uSpecularLight[2];
+	uniform int  uDirectionalFlag[2];
+
+	// Varying values are passed from vertex shader to fragment shader, as interpolated values 
+	varying vec4 fColor;		// Interpolated color 
+	varying vec3 fNormal;
+	varying vec3 fPosition;
+	varying vec2 fTexCoords;
+
+	varying vec3 fAmbientMaterial;  
+	varying vec3 fDiffuseMaterial;  
+	varying vec3 fSpecularMaterial; 
+	varying float fShininess;  
+	
+	void main( ) {
+		precision mediump float;
+		
+		// First set the position of the vertex, projected to screen coordinates
+		gl_Position = uProjection * uViewXform * uModelXform * vec4( vPosition, 1.0 );
+		
+		// If not doing gouraud shading, then just pass through the necessary varyings and return;
+		if( uGouraud == 0 ) {
+			fColor = vec4( vColor, 1.0 );
+			fNormal = vNormal;
+			fPosition = vPosition;
+
+			fAmbientMaterial = vAmbientMaterial;
+			fDiffuseMaterial = vDiffuseMaterial;
+			fSpecularMaterial = vSpecularMaterial;
+			fShininess = vShininess;
+			fTexCoords = vTexCoords;
+
+			return;
+		}
+
+
+		//Variables for lighting claculation
+		vec3 ambientProduct = vAmbientMaterial * uAmbientLight[0]; //first light is just ambient
+		vec3 diffuseProduct;
+		vec3 specularProduct;
+
+		vec3 position;
+		vec3 view;
+		vec3 light;
+		vec3 normal;
+		vec3 halfway;
+
+		float lightDotNormal;
+		float normalDotHalf;
+
+		//loop through multiple light sources
+		for(int i = 0; i < 3; i++)
+		{
+			// Calculate ambient, diffuse, and specular products
+			diffuseProduct += vDiffuseMaterial * uDiffuseLight[i];
+			specularProduct += vSpecularMaterial * uSpecularLight[i];
+
+			//VECTORS
+		
+			// The vertex position is mapped to eye coordinates, but not to screen coordinates
+			position = ( uViewXform * uModelXform * vec4( vPosition, 1.0 ) ).xyz;
+			
+			// The eye is the origin of eye coordinates.  Eye vector points from position to the eye ( origin )
+			view = normalize( -position ); // = normalize ( origin - position )
+			
+			// Points from vertex to light
+			light = normalize( ( uViewXform * vec4( uLightPosition[i], 1.0 ) ).xyz - position );
+			
+			// The normal vector transform
+			normal = normalize( uNormalXform * vNormal );   
+			
+			// Halfway between view and light
+			halfway = normalize( view + light );
+			
+			// Calculate needed dot products
+			lightDotNormal = dot( light, normal ); 	 // Used for diffuse lighting
+			normalDotHalf  = dot( normal, halfway ); // Used for specular lighting
+		}
+
+		
+		// Lighting calculation
+		fColor = vec4(   ambientProduct
+					   + diffuseProduct  * max( lightDotNormal, 0.0 )
+					   + specularProduct * pow( max( normalDotHalf, 0.0 ), vShininess )
+					   , 1.0 );
+
+		//pass through varyings
+		fNormal = vNormal;
+		fPosition = vPosition;
+
+		fAmbientMaterial = vAmbientMaterial;
+		fDiffuseMaterial = vDiffuseMaterial;
+		fSpecularMaterial = vSpecularMaterial;
+		fShininess = vShininess;
+
+		return;			
+		
+	} // end of main( ) of vertex shader
+
+</script>	
+
+<!-- FRAGMENT SHADER --> 
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+	precision mediump float;
+	
+	// Varying variables are interpolated between vertices of a triangle
+	varying vec4 fColor;			// Fragment color - Not needed in all applications
+	varying vec3 fNormal;
+	varying vec3 fPosition;
+	varying vec2 fTexCoords;
+
+
+	//material properties
+	varying vec3 fAmbientMaterial;  
+	varying vec3 fDiffuseMaterial;  
+	varying vec3 fSpecularMaterial; 
+	varying float fShininess;  
+	
+	// Uniform variables are shared for all fragments 
+	uniform int  uPhong;            // Flag to turn on Phong shading
+	uniform int  uIsTex;
+
+	uniform highp mat4 uModelXform;		// Model transformation matrix
+	uniform highp mat4 uViewXform;		// Camera transformation Matrix
+	uniform highp mat4 uProjection;		// Camera Projection Matrix
+	uniform highp mat3 uNormalXform;	 	// Transformation matrix to apply to vertex normals.
+
+	uniform highp vec3 uLightPosition[2]; 	// Position of light source.  Given in world coordinates.
+	uniform highp vec3 uAmbientLight[2];
+	uniform highp vec3 uDiffuseLight[2];
+	uniform highp vec3 uSpecularLight[2];
+	uniform highp int  uDirectionalFlag[2];
+
+	uniform sampler2D uTextureMap;
+
+	void main( ) {
+
+		precision mediump float;
+		
+		// If not doing Phong shading, then just pass through the color and return;
+		if( uPhong == 0 ) {
+			gl_FragColor = fColor;
+			return;
+		}
+		
+		//gl_FragColor = texture2D( uTextureMap, fTexCoords );
+
+		vec3 ambMat;
+		vec3 difMat;
+		if( uIsTex == 1)
+		{
+			ambMat = texture2D( uTextureMap, fTexCoords ).xyz;
+			difMat = texture2D( uTextureMap, fTexCoords ).xyz;
+		}
+		else
+		{
+			ambMat = fAmbientMaterial;
+			difMat = fDiffuseMaterial;
+		}
+
+
+		//Variables for lighting caluculation
+		vec3 ambientProduct = ambMat * uAmbientLight[0]; //first light is just ambient
+		vec3 diffuseProduct;
+		vec3 specularProduct;
+
+		vec3 position;
+		vec3 view;
+		vec3 light;
+		vec3 normal;
+		vec3 halfway;
+
+		float lightDotNormal;
+		float normalDotHalf;
+
+		for(int i = 0; i < 3; i++){
+ 
+			// Calculate products
+			diffuseProduct += difMat * uDiffuseLight[i];
+			specularProduct += fSpecularMaterial * uSpecularLight[i];
+		
+			// VECTORS
+			
+			// The vertex position is mapped to eye coordinates, but not to screen coordinates
+			position = ( uViewXform * uModelXform * vec4( fPosition, 1.0 ) ).xyz;
+			
+			// The eye is the origin of eye coordinates.  Eye vector points from position to the eye ( origin )
+			view = normalize( -position ); // = normalize ( origin - position )
+			
+			// The light vector points from the vertex position to the light source, all in eye coordinates.
+			// Lightposition is already given in world coordinates, so it only needs to be converted
+			//		from world to eye coordinates.
+			light = normalize( ( uViewXform * vec4( uLightPosition[i], 1.0 ) ).xyz - position );
+			
+			// Normal vector transform
+			normal = normalize( uNormalXform * fNormal );   
+			
+			// Halfway vector
+			halfway = normalize( view + light );
+			
+			// DOT PRODUCTS
+			lightDotNormal = dot( light, normal ); 	 // Used for diffuse lighting
+			normalDotHalf  = dot( normal, halfway );    // Used for specular lighting	
+
+		}
+		
+		
+		gl_FragColor = vec4( ambientProduct
+					       + diffuseProduct  * max( lightDotNormal, 0.0 )
+					       + specularProduct * pow( max( normalDotHalf, 0.0 ), fShininess )
+					       , 1.0 );	
+	
+
+		return;
+	
+	} // End of main( ) for fragment shader
+	
+</script>	
+
+</head>
+
+<!-- Webpage -->
+
+<body>
+	<center>
+		<p><img id="brickwall" src="http://localhost:8000/Park_A4/brickwall.png"  hidden/></p>
+		<p><img id="ground" src="http://localhost:8000/Park_A4/ground.jpg"  hidden/></p>
+		<div style="line-height: 10px;">
+			<h1>CS 425 3D Amusement Park</h1>
+			<p>Program by Hal Brynteson, hbrynt2, Spring 2023</p>
+			<p>This program generates a 3D Amusement Park with basic camera controls and lighting</p>
+			<br>
+			<h3>Change Time of Day</h3>
+			<button type="button" onclick="makeDay()">Day</button>
+			<button type="button" onclick="makeNight()">Night</button>
+		</div>
+
+		<br>
+
+		<div style="float: left; padding-left: 25%">
+		<canvas id="gl-canvas" width="800" height="600">
+		Ooops No Canvas Found
+		</canvas>
+		</div>
+
+		<div style="float: left; padding-left: 20px">
+			<h3>
+				Controls
+			</h3>
+			<p style="text-align: left;">
+			W - Move Forwards <br>
+			S - Move Backwards <br>
+			Z - Move Up <br>
+			C - Move Down <br>
+			A - Move Left <br>
+			D - Move Right <br>
+			Q - Rotate Left <br>
+			E - Rotate Right <br>
+			R - Reset View
+			</p>
+
+
+			<button type="button" onclick="addZoom()">Zoom in</button>
+			<button type="button" onclick="subZoom()">Zoom out</button>
+
+			<br>
+
+			<h3>
+				Toggles
+			</h3> 
+			
+			<input type="checkbox" id="visualAxesWorld">
+			<label for="visualAxesWorld">Show World Axes</label> 
+
+			<br>
+
+			<input type="checkbox" id="visualAxesHorse">
+			<label for="visualAxesHorse">Show Horse Axes</label> 
+		
+			<br>
+			<br>
+			
+			<input type="radio" id="isNone" name="light">
+			<label for="isNone">No Shading</label> 
+			<br>
+			<input type="radio" id="isGouraud" name="light">
+			<label for="isGouraud">Gouraud Shading</label>
+			<br>
+			<input type="radio" id="isPhong" name="light">
+			<label for="isPhong">Phong Shading</label> 
+
+			<br>
+
+
+		</div>
+	</center>
+</body>
+</html>
